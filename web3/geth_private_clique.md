@@ -78,3 +78,8 @@ geth --datadir=./data --networkid 12345 --mine --miner.etherbase=b0ab1f54bd403f8
 ```
 
 进入控制台后可以看到已经在按照配置 `5` 秒一个块了
+
+
+## 资料
+
+https://geth.ethereum.org/docs/fundamentals/private-network
