@@ -33,6 +33,8 @@ RCU 机制的实现依赖于一些底层机制，比如内存屏障、原子操�
 
 # RCU 示例
 
+## 示例1 
+
 ``` c
 #include <linux/module.h>
 #include <linux/rcupdate.h>
@@ -92,6 +94,107 @@ void traverse_list(void)
     rcu_read_unlock();
 }
 ```
-示例中，我们使用 RCU 来保护链表的访问。添加节点时，我们不需要获取锁来保护共享资源。删除节点时，我们使用了 list_del_rcu 来删除节点，并使用 call_rcu 函数来安排释放内存的回调函数。在遍历链表时，我们使用了 rcu_read_lock 和 rcu_read_unlock 来进入和离开 RCU 读取临界区。
+
+>示例中，我们使用 RCU 来保护链表的访问。添加节点时，我们不需要获取锁来保护共享资源。删除节点时，我们使用了 list_del_rcu 来删除节点，并使用 call_rcu 函数来安排释放内存的回调函数。在遍历链表时，我们使用了 rcu_read_lock 和 rcu_read_unlock 来进入和离开 RCU 读取临界区。
 
 
+
+## 示例2
+
+```c
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/rculist.h>
+#include <linux/slab.h>
+
+struct my_data {
+    int id;
+    char name[20];
+    struct list_head list;
+    struct rcu_head rcu;
+};
+
+static struct my_data *my_data_alloc(int id, const char *name)
+{
+    struct my_data *data = kmalloc(sizeof(*data), GFP_KERNEL);
+    if (!data)
+        return NULL;
+    data->id = id;
+    strncpy(data->name, name, sizeof(data->name) - 1);
+    INIT_LIST_HEAD(&data->list);
+    return data;
+}
+
+static void my_data_free_rcu(struct rcu_head *rcu)
+{
+    struct my_data *data = container_of(rcu, struct my_data, rcu);
+    kfree(data);
+}
+
+static void my_data_free(struct my_data *data)
+{
+    call_rcu(&data->rcu, my_data_free_rcu);
+}
+
+static void my_data_add(struct my_data *data, struct list_head *head)
+{
+    list_add(&data->list, head);
+}
+
+static void my_data_del(struct my_data *data)
+{
+    list_del_rcu(&data->list);
+    my_data_free(data);
+}
+
+static struct my_data *my_data_find(int id, struct list_head *head)
+{
+    struct my_data *data;
+    rcu_read_lock();
+    list_for_each_entry_rcu(data, head, list) {
+        if (data->id == id) {
+            rcu_read_unlock();
+            return data;
+        }
+    }
+    rcu_read_unlock();
+    return NULL;
+}
+
+static int __init my_module_init(void)
+{
+    struct my_data *data1 = my_data_alloc(1, "Alice");
+    struct my_data *data2 = my_data_alloc(2, "Bob");
+    struct my_data *data3 = my_data_alloc(3, "Charlie");
+    struct my_data *data4 = my_data_alloc(4, "David");
+
+    INIT_LIST_HEAD(my_list);
+
+    my_data_add(data1, &my_list);
+    my_data_add(data2, &my_list);
+    my_data_add(data3, &my_list);
+    my_data_add(data4, &my_list);
+
+    struct my_data *data = my_data_find(3, &my_list);
+    if (data)
+        printk(KERN_INFO "Found data: id=%d name=%s\n", data->id, data->name);
+
+    return 0;
+}
+
+static void __exit my_module_exit(void)
+{
+    struct my_data *data, *next;
+
+    list_for_each_entry_safe(data, next, &my_list, list) {
+        my_data_del(data);
+    }
+}
+
+module_init(my_module_init);
+module_exit(my_module_exit);
+MODULE_LICENSE("GPL");
+```
+
+>这个例子中定义了一个 my_data 结构体，包含一个 id、一个 name，还有一个 rcu_head 结构体，用来实现 RCU 机制。这个结构体同时还包含了一个 list_head，用于构成链表。 在 my_data_alloc 函数中，使用 kmalloc 分配内存，并将数据写入结构体。在 my_data_free_rcu 函数中，使用 container_of 宏将 rcu_head 转换为 my_data，然
